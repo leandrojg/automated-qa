@@ -1,138 +1,165 @@
 <?php
-/**
- * Plugin Name: Automated QA
- * Plugin URI: https://github.com/leandrojg/automated-qa
- * Description: A WordPress plugin that performs QA tasks on client sites to ensure optimal functionality.
- * Version: 1.1.1
- * Author: Convey Digital
- * Author URI: https://www.conveydigital.com/
- * Text Domain: convey-automated-qa
- */
+/*
+Plugin Name: Automated QA
+Plugin URI: https://github.com/leandrojg/automated-qa
+Description: WordPress plugin that will allow us to check certain tasks on our clients' websites to ensure they are functioning optimally.
+Version: 1.1.0
+Author: Convey Digital
+Author URI: https://www.conveydigital.com/
+License: GPL2
+Text Domain: convey-automated-qa
+Domain Path: /languages
+*/
 
-// Include the GitHub Updater class
-include_once 'GitHub_Updater.php';
-
-/**
- * Initialize the GitHub Updater with specified repository details.
- */
-function initialize_github_updater() {
-    $updater = new GitHub_Updater('automated-qa', 'leandrojg', 'automated-qa');
-    
-    // Perform an update check on plugin initialization
-    $updater->check_for_updates();
+// If this file is called directly, abort.
+if ( ! defined( 'WPINC' ) ) {
+	die;
 }
-add_action('init', 'initialize_github_updater');
+
+// Define the plugin version.
+define( 'CONVEY_AUTOMATED_QA_VERSION', '1.1.0' );
 
 /**
- * GitHub_Updater class
+ * Class to handle automatic updates from GitHub.
  */
 class GitHub_Updater {
     private $slug;
-    private $username;
-    private $repo;
     private $plugin_data;
     private $plugin_file;
     private $github_response;
 
-    /**
-     * Constructor sets up plugin details
-     */
-    public function __construct($plugin_slug, $github_username, $github_repo) {
-        $this->slug = $plugin_slug;
-        $this->username = $github_username;
-        $this->repo = $github_repo;
-        $this->plugin_file = plugin_basename(__FILE__);
-        $this->plugin_data = get_plugin_data(__FILE__);
-        
-        // Logging for initialization
-        error_log('GitHub_Updater initialized.');
+    // Define GitHub user and repository data
+    private $username = 'leandrojg';
+    private $repo = 'automated-qa';
 
-        // Add filters for the update and transient data
-        add_filter("pre_set_site_transient_update_plugins", array($this, "set_github_update_transient"));
-        add_filter("plugins_api", array($this, "set_github_plugin_info"), 10, 3);
+    public function __construct($plugin_file) {
+        $this->plugin_file = $plugin_file;
+
+        add_filter("pre_set_site_transient_update_plugins", [$this, "set_update_plugins"]);
+        add_filter("plugins_api", [$this, "set_plugins_api"], 10, 3);
+        add_filter("upgrader_post_install", [$this, "post_install"], 10, 3);
     }
 
-    /**
-     * Check GitHub for the latest plugin version and prepare update data
-     */
-    public function check_for_updates() {
-        $this->github_response = $this->get_github_release_info();
-
-        if ($this->github_response) {
-            $local_version = $this->plugin_data['Version'];
-            $remote_version = $this->github_response->tag_name;
-
-            error_log("Local version: $local_version");
-            error_log("Remote version: $remote_version");
-
-            if (version_compare($local_version, $remote_version, '<')) {
-                error_log("Update detected.");
-            }
-        } else {
-            error_log("GitHub response not retrieved.");
-        }
+    private function init_plugin_data() {
+        $this->slug = plugin_basename($this->plugin_file);
+        $this->plugin_data = get_plugin_data($this->plugin_file);
     }
 
-    /**
-     * Set the update transient with GitHub data if a new version is found
-     */
-    public function set_github_update_transient($transient) {
-        if (empty($transient->checked)) {
-            return $transient;
-        }
+    public function set_update_plugins($transient) {
+        // Check if the transient has been properly initialized
+        if (empty($transient->checked)) return $transient;
 
-        $this->check_for_updates();
+        // Initialize plugin data and get remote version
+        $this->init_plugin_data();
+        $remote_version = $this->get_latest_version();
 
-        if ($this->github_response && version_compare($this->plugin_data['Version'], $this->github_response->tag_name, '<')) {
-            $plugin_info = array(
+        // If remote version is higher, add the plugin to the update transient
+        if (version_compare($this->plugin_data['Version'], $remote_version, '<')) {
+            $plugin = [
                 'slug' => $this->slug,
-                'new_version' => $this->github_response->tag_name,
-                'url' => $this->github_response->html_url,
-                'package' => $this->github_response->zipball_url
-            );
-
-            error_log("Transient response: " . print_r($plugin_info, true));
-
-            $transient->response[$this->plugin_file] = (object) $plugin_info;
+                'new_version' => $remote_version,
+                'url' => "https://github.com/{$this->username}/{$this->repo}/releases/tag/{$remote_version}",
+                'package' => $this->get_latest_zip_url(),
+            ];
+            $transient->response[$this->slug] = (object) $plugin;
         }
-        
+
         return $transient;
     }
 
-    /**
-     * Provide GitHub plugin information for WordPress plugin update details
-     */
-    public function set_github_plugin_info($false, $action, $response) {
-        if ($response->slug !== $this->slug) {
-            return $false;
-        }
+    public function set_plugins_api($result, $action, $args) {
+        if ($action !== 'plugin_information' || $args->slug !== $this->slug) return $result;
 
-        $this->check_for_updates();
+        $this->init_plugin_data();
+        $result = (object) [
+            'name' => $this->plugin_data['Name'],
+            'slug' => $this->slug,
+            'version' => $this->get_latest_version(),
+            'author' => $this->plugin_data['Author'],
+            'homepage' => $this->plugin_data['PluginURI'],
+            'requires' => '5.0',
+            'tested' => '6.0',
+            'download_link' => $this->get_latest_zip_url(),
+            'sections' => [
+                'description' => $this->plugin_data['Description'],
+                'changelog' => 'Check the changelog on GitHub for details on this version.',
+            ],
+        ];
 
-        $response->last_updated = $this->github_response->published_at;
-        $response->slug = $this->slug;
-        $response->plugin_name  = $this->plugin_data['Name'];
-        $response->version = $this->github_response->tag_name;
-        $response->author = $this->plugin_data['AuthorName'];
-        $response->homepage = $this->plugin_data['PluginURI'];
-        $response->download_link = $this->github_response->zipball_url;
-
-        return $response;
+        return $result;
     }
 
-    /**
-     * Get release information from GitHub
-     */
-    private function get_github_release_info() {
+    public function post_install($true, $hook_extra, $result) {
+        global $wp_filesystem;
+        $this->init_plugin_data();
+        $plugin_folder = WP_PLUGIN_DIR . DIRECTORY_SEPARATOR . dirname($this->slug);
+        $wp_filesystem->move($result['destination'], $plugin_folder);
+        $result['destination'] = $plugin_folder;
+        return $result;
+    }
+
+    private function get_latest_version() {
+        $response = $this->github_response();
+        return isset($response->tag_name) ? ltrim($response->tag_name, 'v') : false;
+    }
+
+    private function get_latest_zip_url() {
+        $response = $this->github_response();
+        return isset($response->zipball_url) ? $response->zipball_url : false;
+    }
+
+    private function github_response() {
+        if (!empty($this->github_response)) return $this->github_response;
+
         $url = "https://api.github.com/repos/{$this->username}/{$this->repo}/releases/latest";
-        $response = wp_remote_get($url, array('headers' => array('User-Agent' => 'WordPress Plugin Updater')));
-        
+        $response = wp_remote_get($url);
+
+        // Log only errors related to the GitHub response
         if (is_wp_error($response)) {
-            error_log("GitHub API error: " . $response->get_error_message());
+            error_log('GitHub API error: ' . $response->get_error_message());
             return false;
         }
 
-        $body = wp_remote_retrieve_body($response);
-        return json_decode($body);
+        $this->github_response = json_decode(wp_remote_retrieve_body($response));
+        return $this->github_response;
     }
 }
+
+// Initialize the updater if the user is an admin
+if (is_admin()) {
+    new GitHub_Updater(__FILE__);
+}
+
+/**
+ * Code for plugin activation.
+ */
+function activate_convey_automated_qa() {
+	require_once plugin_dir_path( __FILE__ ) . 'includes/class-convey-automated-qa-activator.php';
+	Convey_Automated_Qa_Activator::activate();
+}
+
+/**
+ * Code for plugin deactivation.
+ */
+function deactivate_convey_automated_qa() {
+	require_once plugin_dir_path( __FILE__ ) . 'includes/class-convey-automated-qa-deactivator.php';
+	Convey_Automated_Qa_Deactivator::deactivate();
+}
+
+register_activation_hook( __FILE__, 'activate_convey_automated_qa' );
+register_deactivation_hook( __FILE__, 'deactivate_convey_automated_qa' );
+
+/**
+ * Include the main plugin class.
+ */
+require plugin_dir_path( __FILE__ ) . 'includes/class-convey-automated-qa.php';
+
+/**
+ * Run the plugin.
+ */
+function run_convey_automated_qa() {
+	$plugin = new Convey_Automated_Qa();
+	$plugin->run();
+}
+
+run_convey_automated_qa();
