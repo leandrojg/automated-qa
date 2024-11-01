@@ -3,7 +3,7 @@
 Plugin Name: Automated QA
 Plugin URI: https://github.com/leandrojg/automated-qa
 Description: WordPress plugin that will allow us to check certain tasks on our clients' websites to ensure they are functioning optimally.
-Version: 1.1.0
+Version: 1.1.1
 Author: Convey Digital
 Author URI: https://www.conveydigital.com/
 License: GPL2
@@ -17,7 +17,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 // Define la versión del plugin.
-define( 'CONVEY_AUTOMATED_QA_VERSION', '1.1.0' );
+define( 'CONVEY_AUTOMATED_QA_VERSION', '1.1.1' );
 
 /**
  * Clase para manejar actualizaciones automáticas desde GitHub.
